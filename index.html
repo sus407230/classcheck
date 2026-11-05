@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#000000">
+  <title>缺席號碼看板</title>
+  <style>
+    :root { color-scheme:dark; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:#000; color:#f4f4f4; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; min-height:100dvh; overflow:hidden; background:#000; }
+    .stage { position:relative; width:100%; height:33.333vh; height:33.333dvh; min-height:190px; overflow:hidden; }
+    .date { position:absolute; top:18px; left:22px; z-index:1; color:#777; font-size:13px; letter-spacing:.04em; }
+    .empty { position:absolute; inset:0; display:grid; place-items:center; color:#474747; font-size:clamp(16px,2.5vw,24px); }
+    .number { position:absolute; top:0; left:0; padding:0; border:0; background:transparent; color:#f5f5f5; font:800 clamp(34px,8vw,82px)/1 system-ui,-apple-system,"Segoe UI",sans-serif; letter-spacing:.015em; cursor:pointer; user-select:none; white-space:nowrap; text-shadow:0 0 18px #fff2; will-change:transform; }
+    .number:hover { color:#fff; text-shadow:0 0 25px #fff7; }
+    .number.exploding { pointer-events:none; animation:vanish .4s ease-out forwards; }
+    @keyframes vanish { 0% { opacity:1; scale:1; filter:blur(0); } 45% { opacity:.85; scale:1.12; } 100% { opacity:0; scale:.3; filter:blur(5px); } }
+    .spark { position:absolute; z-index:3; width:6px; height:6px; border-radius:50%; background:#fff; pointer-events:none; box-shadow:0 0 12px 3px #fff8; animation:burst .5s ease-out forwards; }
+    @keyframes burst { to { opacity:0; transform:translate(var(--dx),var(--dy)) scale(.15); } }
+    .controls { position:absolute; left:50%; bottom:34px; transform:translateX(-50%); width:min(390px,calc(100% - 36px)); text-align:center; }
+    form { display:flex; gap:9px; }
+    input { min-width:0; flex:1; height:48px; border:1px solid #343434; border-radius:10px; outline:none; padding:0 15px; background:#101010; color:#f5f5f5; font:600 18px system-ui,sans-serif; letter-spacing:.08em; }
+    input::placeholder { color:#666; letter-spacing:0; font-size:15px; font-weight:400; }
+    input:focus { border-color:#777; box-shadow:0 0 0 2px #ffffff14; }
+    .add { height:48px; padding:0 17px; border:1px solid #393939; border-radius:10px; background:#202020; color:#eee; font:600 15px system-ui,sans-serif; cursor:pointer; }
+    .add:hover { background:#303030; }
+    .message { min-height:20px; margin:10px 0 0; color:#888; font-size:13px; }
+    .message.error { color:#e29b9b; }
+    .help { position:absolute; right:18px; bottom:16px; color:#3d3d3d; font-size:12px; }
+    @media(max-width:520px) { .stage { min-height:170px; } .date { top:13px; left:15px; font-size:11px; } .controls { bottom:36px; } .number { font-size:clamp(32px,11vw,58px); } .help { display:none; } }
+    @media(prefers-reduced-motion:reduce) { .number.exploding,.spark { animation-duration:.01ms; } }
+  </style>
+</head>
+<body>
+  <section class="stage" id="stage" aria-label="缺席號碼顯示區">
+    <div class="date" id="date"></div>
+    <div class="empty" id="empty">目前沒有缺席號碼</div>
+  </section>
+  <div class="controls">
+    <form id="form" autocomplete="off">
+      <input id="numberInput" type="text" inputmode="numeric" maxlength="12" pattern="[0-9]+" placeholder="輸入缺席號碼" aria-label="輸入缺席號碼" required>
+      <button class="add" type="submit">加入 ↵</button>
+    </form>
+    <p class="message" id="message" aria-live="polite">輸入號碼後按 Enter；點擊號碼即可移除</p>
+  </div>
+  <div class="help">點擊號碼：爆炸移除</div>
+  <script>
+    const stage = document.querySelector('#stage');
+    const input = document.querySelector('#numberInput');
+    const empty = document.querySelector('#empty');
+    const message = document.querySelector('#message');
+    const today = new Date();
+    const dayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    const storageKey = `absence-numbers-${dayKey}`;
+    document.querySelector('#date').textContent = new Intl.DateTimeFormat('zh-TW',{dateStyle:'full'}).format(today);
+    let numbers;
+    try { numbers = JSON.parse(localStorage.getItem(storageKey) || '[]'); if (!Array.isArray(numbers)) numbers = []; }
+    catch { numbers = []; }
+    const movers = [];
+    const clamp = (value, min, max) => Math.max(min, Math.min(value, max));
+    function save() { localStorage.setItem(storageKey, JSON.stringify(numbers)); }
+    function place(number, index = movers.length) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'number'; button.textContent = number;
+      button.setAttribute('aria-label', `移除缺席號碼 ${number}`);
+      stage.append(button);
+      const bounds = stage.getBoundingClientRect();
+      const w = button.offsetWidth, h = button.offsetHeight;
+      const maxX = Math.max(0, bounds.width - w - 12), maxY = Math.max(0, bounds.height - h - 12);
+      const mover = { number, button, x:Math.random()*maxX, y:35+Math.random()*Math.max(0,maxY-35), vx:(Math.random()<.5?-1:1)*(0.65+Math.random()*.65), vy:(Math.random()<.5?-1:1)*(0.35+Math.random()*.65), gone:false };
+      movers.push(mover); button.style.transform = `translate(${mover.x}px,${mover.y}px)`;
+      button.addEventListener('click', () => explode(mover));
+      empty.hidden = true;
+    }
+    function explode(mover) {
+      if (mover.gone) return;
+      mover.gone = true; mover.button.classList.add('exploding');
+      const rect = mover.button.getBoundingClientRect(), area = stage.getBoundingClientRect();
+      for (let i=0;i<12;i++) {
+        const spark = document.createElement('i'); spark.className='spark';
+        spark.style.left = `${rect.left-area.left+rect.width/2-3}px`; spark.style.top = `${rect.top-area.top+rect.height/2-3}px`;
+        const angle = Math.PI*2*i/12 + Math.random()*.25, distance = 24+Math.random()*48;
+        spark.style.setProperty('--dx',`${Math.cos(angle)*distance}px`); spark.style.setProperty('--dy',`${Math.sin(angle)*distance}px`);
+        stage.append(spark); spark.addEventListener('animationend',()=>spark.remove(),{once:true});
+      }
+      numbers = numbers.filter(n => n !== mover.number); save();
+      setTimeout(()=>{mover.button.remove();empty.hidden = movers.some(m=>!m.gone);},410);
+      message.textContent = `已移除 ${mover.number}`; message.classList.remove('error');
+    }
+    function addNumber(raw) {
+      const number = raw.trim();
+      if (!/^\d{1,12}$/.test(number)) { message.textContent='請輸入 1 到 12 位數字'; message.classList.add('error'); return; }
+      if (numbers.includes(number)) { message.textContent=`${number} 已在缺席名單中`; message.classList.add('error'); return; }
+      numbers.push(number); save(); place(number);
+      message.textContent=`已加入 ${number}`; message.classList.remove('error'); input.value=''; input.focus();
+    }
+    document.querySelector('#form').addEventListener('submit',event=>{event.preventDefault();addNumber(input.value);});
+    numbers.forEach((number,index)=>place(String(number),index));
+    let previous = performance.now();
+    function animate(now) {
+      const dt = Math.min(32,now-previous)/16.67; previous=now;
+      const width=stage.clientWidth,height=stage.clientHeight;
+      movers.forEach(m=>{
+        if(m.gone)return;
+        const w=m.button.offsetWidth,h=m.button.offsetHeight;
+        const maxX=Math.max(0,width-w-12),maxY=Math.max(0,height-h-12);
+        m.x+=m.vx*dt; m.y+=m.vy*dt;
+        if(m.x<=0||m.x>=maxX){m.x=clamp(m.x,0,maxX);m.vx*=-1;}
+        if(m.y<=28||m.y>=maxY){m.y=clamp(m.y,28,maxY);m.vy*=-1;}
+        m.button.style.transform=`translate(${m.x}px,${m.y}px)`;
+      });
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
